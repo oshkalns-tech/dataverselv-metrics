@@ -180,51 +180,16 @@ Dataverse reports statistics as "total" and "unique".
 - Unique" views/downloads correspond to the number of unique sessions in which a data project has been viewed/downloaded. Roughly translates to: "X people have viewed/downloaded this project or its files."
 - Total views/downloads correspond to the number of times a project has been viewed/downloaded, including, e.g., multiple counts for multiple views/downloads in the same session or by the same user.
 
-# Build a tidy monthly metrics table irrespective of MDC availability
-metrics <- if (exists("mdc")) mdc else downloads
-
-# Ensure monthly Date type (YYYY-MM -> first of month)
-metrics <- metrics %>%
-  mutate(date = as.Date(paste0(date, "-01")))
-
-stats_long <- metrics %>%
-  tidyr::pivot_longer(-date, names_to = "metric", values_to = "count") %>%
-  mutate(
-    kind = ifelse(grepl("view", metric, ignore.case = TRUE), "Views", "Downloads"),
-    type = ifelse(grepl("unique", metric, ignore.case = TRUE), "Unique", "Total")
-  ) %>%
-  arrange(kind, type, date) %>%
-  group_by(metric) %>%
-  mutate(roll3 = zoo::rollmean(count, k = 3, fill = NA, align = "right")) %>%
-  ungroup()
-
-# Base plot: bars = monthly counts, line = 3-month moving average
-p <- ggplot(stats_long, aes(x = date, y = count)) +
-  annotate(
-    "rect",
-    xmin = period_begin, xmax = period_end,
-    ymin = -Inf, ymax = Inf,
-    alpha = 0.08
-  ) +
-  geom_col() +
-  geom_line(aes(y = roll3), linewidth = 0.8) +
-  facet_grid(type ~ kind, scales = "free_y") +
-  scale_y_continuous(labels = scales::comma) +
-  labs(
-    title = "Views and Downloads by Month",
-    subtitle = paste("Shaded:", period_begin, "to", period_end),
-    x = NULL, y = NULL,
-    caption = "Bars: monthly totals • Line: 3-month moving average"
-  )
-
-print(p)
-
-# Optional: make it interactive automatically in HTML output
-if (knitr::is_html_output()) {
-  suppressPackageStartupMessages(require(plotly))
-  ggplotly(
-    p,
-    tooltip = c("x", "y")
-  )
+```{r mdc}
+# not all dataverse instances use MDC data (QDR does). In case they don't, we use the regular downloads stats
+if (exists("mdc")) {
+  stats_ts <- ts(mdc[, -1], frequency=12, start=strsplit(mdc$date[1], split="-")[[1]])
+} else {
+  stats_ts <- ts(downloads[, -1], frequency=12, 
+                start=strsplit(downloads$date[1], split="-")[[1]])
 }
 
+autoplot(stats_ts, facets = FALSE) +  labs(title="Statistics", color="Statistic") +
+    scale_y_continuous(labels=scales::comma, breaks = seq(0, max(stats_ts, na.rm = TRUE), by = 2))
+
+```
