@@ -190,6 +190,6 @@ if (exists("mdc")) {
 }
 
 autoplot(stats_ts, facets = FALSE) +  labs(title="Statistics", color="Statistic") +
-    scale_y_continuous(labels=scales::comma, breaks = seq(0, max(stats_ts, na.rm = TRUE), by = 2))
+    scale_y_continuous(labels=scales::comma, breaks = seq(0, max(stats_ts, na.rm = TRUE), by = 5))
 
 ```
