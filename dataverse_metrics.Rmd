@@ -173,23 +173,86 @@ projects %>% group_by(pid) %>% filter(date < period_end &
              row.names = FALSE, col.names = c("Project", "Downloads"))
 ```
 
-## Aggregate data
+```{r aggregate_stats, warning=FALSE, message=FALSE}
+# Aggregate plot that includes "Total Views" when available, without requiring MDC.
+# Falls back gracefully if views are not provided by the server.
 
-Dataverse reports statistics as "total" and "unique". 
-
-- Unique" views/downloads correspond to the number of unique sessions in which a data project has been viewed/downloaded. Roughly translates to: "X people have viewed/downloaded this project or its files."
-- Total views/downloads correspond to the number of times a project has been viewed/downloaded, including, e.g., multiple counts for multiple views/downloads in the same session or by the same user.
-
-```{r mdc}
-# not all dataverse instances use MDC data (QDR does). In case they don't, we use the regular downloads stats
-if (exists("mdc")) {
-  stats_ts <- ts(mdc[, -1], frequency=12, start=strsplit(mdc$date[1], split="-")[[1]])
-} else {
-  stats_ts <- ts(downloads[, -1], frequency=52, 
-                start=strsplit(downloads$date[1], split="-")[[1]])
+# Helper to GET monthly metrics safely
+get_monthly <- function(path) {
+  url <- paste0(dataverse, path)  # 'dataverse' is the metrics base like https://host/api/info/metrics
+  resp <- tryCatch(httr::GET(url), error = function(e) NULL)
+  if (is.null(resp) || httr::status_code(resp) < 200 || httr::status_code(resp) >= 300) {
+    return(tibble::tibble(date = character(), count = integer()))
+  }
+  x <- httr::content(resp)
+  if (!length(x$data)) return(tibble::tibble(date = character(), count = integer()))
+  dplyr::bind_rows(x$data)
 }
 
-autoplot(stats_ts, facets = FALSE) +  labs(title="Statistics", color="Statistic") +
-    scale_y_continuous(labels=scales::comma, breaks = seq(0, max(stats_ts, na.rm = TRUE), by = 5))
+# Downloads (total) from standard endpoint or cached object
+downloads <- if (exists("downloads")) {
+  downloads
+} else {
+  get_monthly("/downloads/monthly")
+}
+
+# Unique Downloads are provided per PID; aggregate to monthly
+unique_dl <- if (exists("projects")) {
+  projects %>%
+    dplyr::group_by(date) %>%
+    dplyr::summarise(`Unique Downloads` = sum(count), .groups = "drop")
+} else {
+  # Fallback: try endpoint with monthly unique downloads if ever exposed; else empty
+  udl <- get_monthly("/uniquedownloads/monthly")
+  if (nrow(udl)) {
+    udl %>% dplyr::transmute(date, `Unique Downloads` = count)
+  } else {
+    tibble::tibble(date = character(), `Unique Downloads` = integer())
+  }
+}
+
+# Views endpoints may not exist when MDC is not enabled; handle empties
+views_total <- get_monthly("/views/monthly")     # often empty without MDC
+views_unique <- get_monthly("/uniqueviews/monthly")
+
+# Build aggregate wide table; include only non-empty series
+agg <- downloads %>% dplyr::transmute(date, `Total Downloads` = count)
+
+if (nrow(unique_dl)) {
+  agg <- dplyr::full_join(agg, unique_dl, by = "date")
+}
+if (nrow(views_total)) {
+  agg <- dplyr::full_join(agg, views_total %>% dplyr::transmute(date, `Total Views` = count), by = "date")
+}
+if (nrow(views_unique)) {
+  agg <- dplyr::full_join(agg, views_unique %>% dplyr::transmute(date, `Unique Views` = count), by = "date")
+}
+
+# If nothing came back, stop with a clear message
+if (!nrow(agg)) stop("No monthly metrics returned by the API. Check DATAVERSE_SERVER and connectivity.")
+
+# Order by date and construct a time series matrix
+agg <- agg %>% dplyr::arrange(date)
+
+# Convert "YYYY-MM" to ts start
+start_vec <- strsplit(agg$date[1], "-")[[1]]
+start_year <- as.integer(start_vec[1])
+start_month <- as.integer(start_vec[2])
+
+mat <- as.matrix(agg[, -1, drop = FALSE])
+storage.mode(mat) <- "numeric"
+
+stats_ts <- stats::ts(mat, frequency = 12, start = c(start_year, start_month))
+
+# Plot with adaptive y-axis
+ymax <- max(stats_ts, na.rm = TRUE)
+step <- max(1, round(ymax / 6))
+
+ggfortify::autoplot(stats_ts, facets = FALSE) +
+  ggplot2::labs(title = "Statistics", color = "Statistic") +
+  ggplot2::scale_y_continuous(labels = scales::comma,
+                              breaks = seq(0, ymax, by = step))
+
+
 
 ```
