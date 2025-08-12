@@ -185,7 +185,7 @@ Dataverse reports statistics as "total" and "unique".
 if (exists("mdc")) {
   stats_ts <- ts(mdc[, -1], frequency=12, start=strsplit(mdc$date[1], split="-")[[1]])
 } else {
-  stats_ts <- ts(downloads[, -1], frequency=12, 
+  stats_ts <- ts(downloads[, -1], frequency=52, 
                 start=strsplit(downloads$date[1], split="-")[[1]])
 }
 
